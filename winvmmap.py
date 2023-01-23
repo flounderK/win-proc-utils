@@ -188,6 +188,13 @@ kernel32.VirtualQueryEx.argtypes = (wintypes.HANDLE,
                                     ctypes.POINTER(MEMORY_BASIC_INFORMATION),
                                     ctypes.c_size_t)
 
+kernel32.ReadProcessMemory.errcheck = errcheck_bool
+kernel32.ReadProcessMemory.argtypes = (wintypes.HANDLE,
+                                       ctypes.c_void_p,
+                                       ctypes.c_void_p,
+                                       ctypes.c_size_t,
+                                       ctypes.POINTER(ctypes.c_size_t))
+
 
 advapi32 = ctypes.WinDLL('Advapi32', use_last_error=True)
 
@@ -241,6 +248,7 @@ OpenProcessToken = kernel32.OpenProcessToken
 OpenProcess = kernel32.OpenProcess
 CloseHandle = kernel32.CloseHandle
 VirtualQueryEx = kernel32.VirtualQueryEx
+ReadProcessMemory = kernel32.ReadProcessMemory
 
 
 LookupPrivilegeValueW = advapi32.LookupPrivilegeValueW
@@ -295,12 +303,12 @@ class MemoryQueryManager:
         self.memory_regions = []
         self.module_infos = []
         self.mapped_files = {}
-        self.initial_query(pid)
+        self.initial_query()
 
-    def initial_query(self, pid):
+    def initial_query(self):
         enable_debug_privilege()
 
-        hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+        hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, self.pid)
         pathbuf = (ctypes.c_ubyte*MAX_PATH)()
 
         # iterate over all of the addresses starting at zero, find all of the regions
@@ -340,6 +348,43 @@ class MemoryQueryManager:
                 
             moduleinfos.append((mi, ctypes.string_at(pathbuf).decode()))
         self.module_infos = moduleinfos
+        
+        CloseHandle(hProcess)
+    
+    def dump_regions_of_ptrs(self, ptrs):
+        """
+        Write region that contains the given address
+        """
+        if not isinstance(ptrs, list):
+            ptrs = [ptrs]
+
+        enable_debug_privilege()
+
+        hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, self.pid)
+        for region in self.memory_regions:
+            if region.State == MemState.MEM_FREE:
+                continue
+            region_start = region.BaseAddress
+            region_end = region_start + region.RegionSize
+            write_region_to_file = False
+            for p in ptrs:
+                if region_start <= p and p <= region_end:
+                    write_region_to_file = True
+            
+            if write_region_to_file is False:
+                continue
+
+            read_buf = (ctypes.c_ubyte*region.RegionSize)()
+            bytes_read = ctypes.c_size_t(0)
+            ReadProcessMemory(hProcess, region_start, ctypes.byref(read_buf), region.RegionSize,
+                              ctypes.byref(bytes_read))
+            
+            filename = f"{self.pid}.{region_start:016x}-{region_end:016x}.dump"
+            with open(filename, "wb") as f:
+                f.write(bytearray(read_buf))
+        
+        CloseHandle(hProcess)
+
 
     def print_memory(self):
         """
