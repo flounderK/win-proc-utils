@@ -4,6 +4,7 @@ from ctypes import wintypes
 import argparse
 import _ctypes
 import enum
+import re
 
 
 class NiceHexFieldRepr:
@@ -372,16 +373,38 @@ class MemoryQueryManager:
         self.module_infos = moduleinfos
         
         CloseHandle(hProcess)
+
+    
+    def iter_regions_callback(self, func):
+        """
+        callback to a function with the signature:
+        `func(MemoryQueryManager, process_handle, MEMORY_BASIC_INFORMATION)`
+        """
+        enable_debug_privilege()
+        hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, self.pid)
+        collected = []
+        for region in self.memory_regions:
+            if region.State == MemState.MEM_FREE:
+                continue
+            
+            try:
+                res = func(self, hProcess, region)
+            except Exception as err:
+                continue
+            collected.append(res)
+        
+        CloseHandle(hProcess)
+        return collected
     
     def dump_regions_of_ptrs(self, ptrs):
         """
         Write region that contains the given address
         """
-        if not isinstance(ptrs, list):
+        if not hasattr(ptrs, "__iter__"):
             ptrs = [ptrs]
 
         enable_debug_privilege()
-
+        # TODO: maybe rewrite this as a callback function 
         hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, self.pid)
         for region in self.memory_regions:
             if region.State == MemState.MEM_FREE:
@@ -396,17 +419,59 @@ class MemoryQueryManager:
             if write_region_to_file is False:
                 continue
 
-            read_buf = (ctypes.c_ubyte*region.RegionSize)()
-            bytes_read = ctypes.c_size_t(0)
-            ReadProcessMemory(hProcess, region_start, ctypes.byref(read_buf), region.RegionSize,
-                              ctypes.byref(bytes_read))
-            
-            filename = f"{self.pid}.{region_start:016x}-{region_end:016x}.dump"
-            with open(filename, "wb") as f:
-                f.write(bytearray(read_buf))
+            self.write_region_to_file(hProcess, region)
         
         CloseHandle(hProcess)
 
+    def write_region_to_file(self, hProcess, region):
+        """
+        MEMORY_BASIC_INFORMATION
+        """
+        read_buf = (ctypes.c_ubyte*region.RegionSize)()
+        bytes_read = ctypes.c_size_t(0)
+        ReadProcessMemory(hProcess, region.BaseAddress, ctypes.byref(read_buf), region.RegionSize,
+                            ctypes.byref(bytes_read))
+        region_end = region.BaseAddress + region.RegionSize
+        filename = f"{self.pid}.{region.BaseAddress:016x}-{region_end:016x}.dump"
+        with open(filename, "wb") as f:
+            f.write(bytearray(read_buf))
+        
+    def search_memory_for_pattern(self, pattern, write_region_to_file=False, escape=True):
+
+        if escape is True:
+            pattern = re.escape(pattern)
+        
+        rexp = re.compile(pattern, re.MULTILINE | re.DOTALL)
+
+        found_locations = []
+        hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, self.pid)
+        for region in self.memory_regions:
+            if region.State == MemState.MEM_FREE:
+                continue
+            region_start = region.BaseAddress
+            region_end = region_start + region.RegionSize
+            any_found_matches = False
+
+            read_buf = (ctypes.c_ubyte*region.RegionSize)()
+            bytes_read = ctypes.c_size_t(0)
+            ReadProcessMemory(hProcess, region.BaseAddress, ctypes.byref(read_buf), region.RegionSize,
+                                ctypes.byref(bytes_read))
+
+            read_buf_bytearray = bytearray(read_buf)
+            for m in re.finditer(rexp, read_buf_bytearray):
+                found_locations.append(region_start + m.start())
+                any_found_matches = True
+            
+            if any_found_matches is False or write_region_to_file is False:
+                continue
+            
+            # inlining the dump to file here to avoid reading the region bytes in again
+            filename = f"{self.pid}.{region.BaseAddress:016x}-{region_end:016x}.dump"
+            with open(filename, "wb") as f:
+                f.write(read_buf_bytearray)
+        
+        CloseHandle(hProcess)
+        return found_locations
 
     def print_memory(self):
         """
