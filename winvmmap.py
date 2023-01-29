@@ -166,82 +166,26 @@ class MODULEINFO(ctypes.Structure, NiceHexFieldRepr):
     ]
 
 
+def lookup_library_symbol(symbol, libraries, **kwargs):
+    """
+    Look up the given symbol, stopping with the first library that contains it
+    """
+    if not hasattr(libraries, "__iter__") or isinstance(libraries, str):
+        libraries = [libraries]
+
+    for lib in libraries:
+        if isinstance(lib, str):
+            lib = ctypes.WinDLL(lib, **kwargs)
+        try:
+            looked_up = getattr(lib, symbol)
+        except Exception as err:
+            continue
+        return looked_up
+
+
 kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-
-kernel32.OpenProcessToken.errcheck = errcheck_bool
-kernel32.OpenProcessToken.argtypes = (wintypes.HANDLE,
-                                      wintypes.DWORD,
-                                      wintypes.PHANDLE)
-
-kernel32.OpenProcess.restype = wintypes.HANDLE
-kernel32.OpenProcess.argtypes = (wintypes.DWORD,
-                                 wintypes.BOOL,
-                                 wintypes.DWORD)
-
-
-kernel32.CloseHandle.errcheck = errcheck_bool
-kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-
-kernel32.VirtualQueryEx.argtypes = (wintypes.HANDLE,
-                                    ctypes.c_void_p,
-                                    ctypes.POINTER(MEMORY_BASIC_INFORMATION),
-                                    ctypes.c_size_t)
-
-kernel32.ReadProcessMemory.errcheck = errcheck_bool
-kernel32.ReadProcessMemory.argtypes = (wintypes.HANDLE,
-                                       ctypes.c_void_p,
-                                       ctypes.c_void_p,
-                                       ctypes.c_size_t,
-                                       ctypes.POINTER(ctypes.c_size_t))
-
-
 advapi32 = ctypes.WinDLL('Advapi32', use_last_error=True)
-
-advapi32.LookupPrivilegeValueW.errcheck = errcheck_bool
-advapi32.LookupPrivilegeValueW.argtypes = (wintypes.LPCSTR,
-                                           wintypes.LPCSTR,
-                                           ctypes.POINTER(LUID_AND_ATTRIBUTES))
-
-advapi32.AdjustTokenPrivileges.errcheck = errcheck_bool
-advapi32.AdjustTokenPrivileges.argtypes = (wintypes.HANDLE,
-                                           wintypes.BOOL,
-                                           ctypes.POINTER(TOKEN_PRIVILEGES),
-                                           wintypes.DWORD,
-                                           ctypes.c_void_p,
-                                           ctypes.POINTER(wintypes.DWORD))
-
 psapi = ctypes.WinDLL('Psapi', use_last_error=True)
-
-psapi.EnumProcessModules.errcheck = errcheck_bool
-psapi.EnumProcessModules.argtypes = (wintypes.HANDLE,
-                                     wintypes.HMODULE,
-                                     wintypes.DWORD,
-                                     wintypes.LPDWORD)
-
-psapi.EnumProcessModulesEx.errcheck = errcheck_bool
-psapi.EnumProcessModulesEx.argtypes = (wintypes.HANDLE,
-                                       wintypes.HMODULE,
-                                       wintypes.DWORD,
-                                       wintypes.LPDWORD,
-                                       wintypes.DWORD)
-
-psapi.GetModuleInformation.errcheck = errcheck_bool
-psapi.GetModuleInformation.argtypes = (wintypes.HANDLE,
-                                       wintypes.HMODULE,
-                                       ctypes.POINTER(MODULEINFO),
-                                       wintypes.DWORD)
-psapi.GetModuleFileNameExA.restype = wintypes.DWORD
-psapi.GetModuleFileNameExA.argtypes = (wintypes.HANDLE,
-                                       wintypes.HMODULE,
-                                       ctypes.c_void_p,
-                                       wintypes.DWORD)
-psapi.GetMappedFileNameA.restype = wintypes.DWORD
-psapi.GetMappedFileNameA.argtypes = (wintypes.HANDLE,
-                                     ctypes.c_void_p,
-                                     ctypes.c_void_p,
-                                     wintypes.DWORD)
-
 
 GetCurrentProcess = kernel32.GetCurrentProcess
 OpenProcessToken = kernel32.OpenProcessToken
@@ -254,13 +198,91 @@ ReadProcessMemory = kernel32.ReadProcessMemory
 LookupPrivilegeValueW = advapi32.LookupPrivilegeValueW
 AdjustTokenPrivileges = advapi32.AdjustTokenPrivileges
 
-# TODO: handle older machines where this was in kernel32
-EnumProcessModules = psapi.EnumProcessModules
+EnumProcessModules = lookup_library_symbol("EnumProcessModules", 
+                                           ["kernel32", "Psapi"],
+                                           use_last_error=True)
+
 EnumProcessModulesEx = psapi.EnumProcessModulesEx
 GetModuleInformation = psapi.GetModuleInformation
 GetMappedFileNameA = psapi.GetMappedFileNameA
-# TODO: handle older machines where this was in kernel32
-GetModuleFileNameExA = psapi.GetModuleFileNameExA
+
+GetModuleFileNameExA = lookup_library_symbol("GetModuleFileNameExA", 
+                                           ["kernel32", "Psapi"],
+                                           use_last_error=True)
+
+
+GetCurrentProcess.restype = wintypes.HANDLE
+
+OpenProcessToken.errcheck = errcheck_bool
+OpenProcessToken.argtypes = (wintypes.HANDLE,
+                             wintypes.DWORD,
+                             wintypes.PHANDLE)
+
+OpenProcess.restype = wintypes.HANDLE
+OpenProcess.argtypes = (wintypes.DWORD,
+                        wintypes.BOOL,
+                        wintypes.DWORD)
+
+
+CloseHandle.errcheck = errcheck_bool
+CloseHandle.argtypes = (wintypes.HANDLE,)
+
+VirtualQueryEx.argtypes = (wintypes.HANDLE,
+                           ctypes.c_void_p,
+                           ctypes.POINTER(MEMORY_BASIC_INFORMATION),
+                           ctypes.c_size_t)
+
+ReadProcessMemory.errcheck = errcheck_bool
+ReadProcessMemory.argtypes = (wintypes.HANDLE,
+                              ctypes.c_void_p,
+                              ctypes.c_void_p,
+                              ctypes.c_size_t,
+                              ctypes.POINTER(ctypes.c_size_t))
+
+
+LookupPrivilegeValueW.errcheck = errcheck_bool
+LookupPrivilegeValueW.argtypes = (wintypes.LPCSTR,
+                                  wintypes.LPCSTR,
+                                  ctypes.POINTER(LUID_AND_ATTRIBUTES))
+
+AdjustTokenPrivileges.errcheck = errcheck_bool
+AdjustTokenPrivileges.argtypes = (wintypes.HANDLE,
+                                  wintypes.BOOL,
+                                  ctypes.POINTER(TOKEN_PRIVILEGES),
+                                  wintypes.DWORD,
+                                  ctypes.c_void_p,
+                                  ctypes.POINTER(wintypes.DWORD))
+
+
+EnumProcessModules.errcheck = errcheck_bool
+EnumProcessModules.argtypes = (wintypes.HANDLE,
+                               wintypes.HMODULE,
+                               wintypes.DWORD,
+                               wintypes.LPDWORD)
+
+EnumProcessModulesEx.errcheck = errcheck_bool
+EnumProcessModulesEx.argtypes = (wintypes.HANDLE,
+                                 wintypes.HMODULE,
+                                 wintypes.DWORD,
+                                 wintypes.LPDWORD,
+                                 wintypes.DWORD)
+
+GetModuleInformation.errcheck = errcheck_bool
+GetModuleInformation.argtypes = (wintypes.HANDLE,
+                                 wintypes.HMODULE,
+                                 ctypes.POINTER(MODULEINFO),
+                                 wintypes.DWORD)
+GetModuleFileNameExA.restype = wintypes.DWORD
+GetModuleFileNameExA.argtypes = (wintypes.HANDLE,
+                                 wintypes.HMODULE,
+                                 ctypes.c_void_p,
+                                 wintypes.DWORD)
+GetMappedFileNameA.restype = wintypes.DWORD
+GetMappedFileNameA.argtypes = (wintypes.HANDLE,
+                               ctypes.c_void_p,
+                               ctypes.c_void_p,
+                               wintypes.DWORD)
+
 
 def enable_debug_privilege():
     hProcess = GetCurrentProcess()
