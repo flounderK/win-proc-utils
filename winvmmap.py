@@ -5,6 +5,14 @@ import argparse
 import _ctypes
 import enum
 import re
+import logging
+
+
+log = logging.getLogger("winvmmap")
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(levelname)-7s | %(asctime)-23s | %(message)s'))
+log.addHandler(handler)
+log.setLevel(logging.WARNING)
 
 
 class NiceHexFieldRepr:
@@ -82,7 +90,7 @@ class MemType(enum.IntEnum):
     MEM_PRIVATE = 0x20000
 
 
-class WinPageProt(enum.IntEnum):
+class WinPageProt(enum.IntFlag):
     PAGE_EXECUTE = 0x10
     PAGE_EXECUTE_READ = 0x20
     PAGE_EXECUTE_READWRITE = 0x40
@@ -93,6 +101,9 @@ class WinPageProt(enum.IntEnum):
     PAGE_WRITECOPY = 0x08
     PAGE_TARGETS_INVALID = 0x40000000
     PAGE_TARGETS_NO_UPDATE = 0x40000000
+    PAGE_GUARD = 0x100
+    PAGE_NOCACHE = 0x200
+    PAGE_WRITECOMBINE = 0x400
 
 
 class PageProt(enum.IntFlag):
@@ -102,7 +113,7 @@ class PageProt(enum.IntFlag):
     PROT_EXEC = 4
 
 
-PAGE_GUARD = 0x100
+
 
 PROCESS_CREATE_PROCESS = (0x0080)
 PROCESS_CREATE_THREAD = (0x0002)
@@ -304,20 +315,23 @@ def enable_debug_privilege():
 
 
 def page_prot_from_windows(prot):
-    if prot == WinPageProt.PAGE_NOACCESS:
+    if (prot & WinPageProt.PAGE_NOACCESS) != 0:
       return PageProt.PROT_NONE
-    elif prot == WinPageProt.PAGE_READONLY:
+    elif (prot & WinPageProt.PAGE_READONLY) != 0:
       return PageProt.PROT_READ
-    elif prot in [WinPageProt.PAGE_READWRITE,
-                  WinPageProt.PAGE_WRITECOPY]:
+    elif ((prot & WinPageProt.PAGE_READWRITE) != 0) or \
+         ((prot & WinPageProt.PAGE_WRITECOPY) != 0):
       return PageProt.PROT_READ | PageProt.PROT_WRITE
-    elif prot == WinPageProt.PAGE_EXECUTE:
+    elif (prot & WinPageProt.PAGE_EXECUTE) != 0:
       return PageProt.PROT_EXEC
-    elif prot == WinPageProt.PAGE_EXECUTE_READ:
+    elif (prot & WinPageProt.PAGE_EXECUTE_READ) != 0:
       return PageProt.PROT_EXEC | PageProt.PROT_READ
-    elif prot in [WinPageProt.PAGE_EXECUTE_READWRITE,
-                  WinPageProt.PAGE_EXECUTE_WRITECOPY]:
+    elif ((prot & WinPageProt.PAGE_EXECUTE_READWRITE) != 0) or \
+         ((prot & WinPageProt.PAGE_EXECUTE_WRITECOPY) != 0):
       return PageProt.PROT_READ | PageProt.PROT_WRITE | PageProt.PROT_EXEC
+    else:
+        log.debug("Unhandled page prot %s" % hex(prot if isinstance(prot, int) else 0))
+        return PageProt.PROT_NONE
 
 
 class MemoryQueryManager:
@@ -343,7 +357,7 @@ class MemoryQueryManager:
             ret = VirtualQueryEx(hProcess, cur_base_address, ctypes.byref(mbi), ctypes.sizeof(mbi))
             if ret == 0:
                 break
-            if mbi.Protect != 0 and (mbi.Protect & PAGE_GUARD) == 0:
+            if mbi.Protect != 0 and (mbi.Protect & WinPageProt.PAGE_GUARD) == 0:
                 mem_regions.append(mbi)
             if mbi.Type == MemType.MEM_MAPPED:
                 ctypes.memset(pathbuf, 0, ctypes.sizeof(pathbuf))
@@ -518,7 +532,12 @@ def cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("pid", type=int, 
                         help="Process id of the process to trace.")
+    parser.add_argument("--debug", action="store_true",
+                        default=False, help="enable debug logging")
     args = parser.parse_args()
+    if args.debug is True:
+        log.setLevel(logging.DEBUG)
+
     mqm = MemoryQueryManager(args.pid)
     mqm.print_memory()
 
