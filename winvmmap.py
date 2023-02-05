@@ -6,6 +6,7 @@ import _ctypes
 import enum
 import re
 import logging
+import traceback
 
 
 log = logging.getLogger("winvmmap")
@@ -46,7 +47,7 @@ def gen_enum_flags_repr(enum_flag_class):
     """
     def inner(attr_val):
         members, uncovered = enum._decompose(enum_flag_class, attr_val)
-        member_repr = '|'.join([i.name for i in members])
+        member_repr = '|'.join([str(i.name) for i in members])
         rep = "%s: %#x" % (member_repr, attr_val)
         return rep
     return inner
@@ -468,8 +469,11 @@ class MemoryQueryManager:
 
             read_buf = (ctypes.c_ubyte*region.RegionSize)()
             bytes_read = ctypes.c_size_t(0)
-            ReadProcessMemory(hProcess, region.BaseAddress, ctypes.byref(read_buf), region.RegionSize,
-                                ctypes.byref(bytes_read))
+            try:
+                ReadProcessMemory(hProcess, region.BaseAddress, ctypes.byref(read_buf), region.RegionSize,
+                                  ctypes.byref(bytes_read))
+            except OSError as err:
+                log.debug(traceback.format_exc())
 
             read_buf_bytearray = bytearray(read_buf)
             for m in re.finditer(rexp, read_buf_bytearray):
