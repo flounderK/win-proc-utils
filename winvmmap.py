@@ -491,10 +491,14 @@ class MemoryQueryManager:
         CloseHandle(hProcess)
         return found_locations
 
-    def print_memory(self):
+    def print_memory(self, addrs=None):
         """
         Print out address space, similar to /proc/self/maps on linux
         """
+        if addrs is None:
+            addrs = []
+        addrs = list(addrs)
+        addrs.sort()
         for region in self.memory_regions:
             if region.State == MemState.MEM_FREE:
                 continue
@@ -529,6 +533,11 @@ class MemoryQueryManager:
                 path = self.mapped_files.get(region_start)
                 if path is not None:
                     line += path
+            if addrs:
+                addrs_in = ["%#x" % i for i in addrs if i >= region_start and i < region_end]
+                if addrs_in:
+                    addr_list = ", ".join(addrs_in)
+                    line += "    <--- %s" % addr_list
             print(line)
 
 
@@ -538,12 +547,15 @@ def cli():
                         help="Process id of the process to trace.")
     parser.add_argument("--debug", action="store_true",
                         default=False, help="enable debug logging")
+    parser.add_argument("addresses", nargs='*', type=str, default=None)
     args = parser.parse_args()
     if args.debug is True:
         log.setLevel(logging.DEBUG)
+    if args.addresses is not None:
+        args.addresses = [int(i, 16) for i in args.addresses]
 
     mqm = MemoryQueryManager(args.pid)
-    mqm.print_memory()
+    mqm.print_memory(addrs=args.addresses)
 
 
 if __name__ == "__main__":
